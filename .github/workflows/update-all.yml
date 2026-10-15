@@ -1,0 +1,139 @@
+name: Update All AUR Packages
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push changes to AUR (set to false for dry-run)'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  parse-packages:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    outputs:
+      matrix: ${{ steps.output-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout updater repo
+        uses: actions/checkout@v4
+
+      - name: Parse packages.yml into JSON matrix
+        uses: mikefarah/yq@v4
+        with:
+          cmd: |
+            yq -o=json eval '{"include": .packages}' packages.yml | tr -d '\n' > matrix.json
+
+      - name: Log Generated Matrix for Debugging
+        run: |
+          echo "=== Generated Matrix JSON ==="
+          cat matrix.json
+          echo ""
+
+      - name: Set Matrix Output
+        id: output-matrix
+        run: echo "matrix=$(cat matrix.json)" >> $GITHUB_OUTPUT
+
+  update-package:
+    needs: parse-packages
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    container:
+      image: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.parse-packages.outputs.matrix) }}
+    env:
+      PUSH_CHANGES: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push || 'true' }}
+    steps:
+      - name: Configure SSH for AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "ERROR: AUR_SSH_KEY secret is empty or not accessible by the workflow!"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur_key
+          chmod 600 ~/.ssh/aur_key
+          
+          echo "SSH Key successfully written. Fingerprint:"
+          ssh-keygen -lf ~/.ssh/aur_key || true
+
+      - name: Checkout updater scripts repo
+        uses: actions/checkout@v4
+        with:
+          path: updater-repo
+
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git jq curl pacman-contrib openssh sudo
+
+      - name: Clone AUR Package Repository
+        run: |
+          # Force git to use the exact private key file and bypass host checking
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" \
+            git clone ssh://aur@aur.archlinux.org/${{ matrix.name }}.git pkg-repo
+
+      - name: Run Update Script & Check for Changes
+        id: check-updates
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_CHECKSUM: ${{ matrix.update_checksum }}
+          UPSTREAM_REPO: ${{ matrix.upstream_repo }}
+        run: |
+          cd pkg-repo
+          bash ../updater-repo/scripts/${{ matrix.script }} "${{ matrix.name }}"
+          
+          # Check if the update script modified any files
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No updates found for ${{ matrix.name }}. Finishing early."
+            echo "updated=false" >> $GITHUB_OUTPUT
+          else
+            echo "Updates detected!"
+            echo "updated=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Test Package
+        if: steps.check-updates.outputs.updated == 'true'
+        run: |
+          cd pkg-repo
+          
+          # Create a non-root build user (makepkg blocks running as root)
+          useradd -m builder
+          chown -R builder:builder .
+          
+          # Grant passwordless sudo so makepkg -s can install dependencies
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          
+          # Run makepkg as the builder user to verify dependencies and build success
+          su builder -c "makepkg -s --noconfirm -f"
+
+      - name: Commit changes locally
+        if: steps.check-updates.outputs.updated == 'true'
+        id: commit
+        run: |
+          cd pkg-repo
+          
+          git config user.name "AUR Bot"
+          git config user.email "aur-bot@users.noreply.github.com"
+
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to latest upstream release"
+
+      - name: Push changes to AUR
+        if: steps.check-updates.outputs.updated == 'true'
+        run: |
+          cd pkg-repo
+          
+          if [ "$PUSH_CHANGES" = "true" ]; then
+            echo "Pushing changes to AUR..."
+            git push origin master
+          else
+            echo "Dry-run mode: Skipping push to AUR as requested."
+          fi

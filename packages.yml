@@ -1,0 +1,10 @@
+packages:
+  - name: nuvio-desktop
+    upstream_repo: NuvioMedia/NuvioDesktop
+    script: update-github-package-version-from-release.sh
+    update_checksum: true
+
+  - name: nuvio-desktop-git
+    upstream_repo: NuvioMedia/NuvioDesktop
+    script: update-github-package-version-from-release.sh
+    update_checksum: false
