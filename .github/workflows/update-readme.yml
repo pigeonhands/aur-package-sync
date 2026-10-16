@@ -1,0 +1,80 @@
+name: Update Readme and Versions
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 2
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Update Versions and README
+        env:
+          VERSION_DIR: package_versions
+        run: |
+          set -euo pipefail
+          
+          if [ ! -f "README.template.md" ]; then
+            echo "Error: README.template.md not found in repository root!"
+            exit 1
+          fi
+          
+          bash scripts/check-versions.sh
+          
+          TABLE_ROWS=""
+          SUMMARY_TABLE="| Package | Status | Version | Updated (UTC) | Upstream |\n| :--- | :--- | :--- | :--- | :--- |\n"
+          
+          # Loop through all version state files saved in VERSION_DIR
+          for state_file in package_versions/*; do
+            if [ ! -f "$state_file" ]; then continue; fi
+            
+            # Source the file to load variables: PKG_NAME, UPSTREAM, PKG_VER, LAST_UPDATED_UTC, STATUS
+            # (Assuming your script exports/writes these variables into the file)
+            source "$state_file"
+            
+            case "${STATUS:-}" in
+              "Initialized") STATUS_LABEL="✨ Initialized" ;;
+              "Updated") STATUS_LABEL="🚀 Updated" ;;
+              *) STATUS_LABEL="💤 No Update" ;;
+            esac
+            
+            AUR_BADGE="![AUR Version](https://img.shields.io/aur/version/${PKG_NAME})"
+            
+            TABLE_ROWS+="| [\`${PKG_NAME}\`](https://aur.archlinux.org/packages/${PKG_NAME}) | ${AUR_BADGE} | \`${LAST_UPDATED_UTC}\` | [${UPSTREAM}](https://github.com/${UPSTREAM}) |"$'\n'
+            SUMMARY_TABLE+="| \`${PKG_NAME}\` | ${STATUS_LABEL} | ${AUR_BADGE} | \`${LAST_UPDATED_UTC}\` | [${UPSTREAM}](https://github.com/${UPSTREAM}) |\n"
+          done
+          
+          awk -v r="$TABLE_ROWS" '{gsub(/%package-table%/, r); print}' README.template.md > README.md
+          
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "### 📦 AUR Package Update Status" >> "$GITHUB_STEP_SUMMARY"
+            echo -e "$SUMMARY_TABLE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Commit and Push Changes if Any
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add package_versions/ README.md
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to README or versions."
+            exit 0
+          fi
+          
+          git commit -m "docs: update package versions, badges, timestamps, and status summary"
+          git push origin master

@@ -19,13 +19,16 @@ jobs:
       matrix: ${{ steps.output-matrix.outputs.matrix }}
     steps:
       - name: Checkout updater repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Parse packages.yml into JSON matrix
-        uses: mikefarah/yq@v4
-        with:
-          cmd: |
-            yq -o=json eval '{"include": .packages}' packages.yml | tr -d '\n' > matrix.json
+        run: |
+          yq -o=json eval '{"include": .packages}' packages.yml | tr -d '\n' > matrix.json
 
       - name: Log Generated Matrix for Debugging
         run: |
@@ -49,6 +52,9 @@ jobs:
     env:
       PUSH_CHANGES: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push || 'true' }}
     steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git jq curl pacman-contrib openssh sudo
+
       - name: Configure SSH for AUR
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
@@ -59,7 +65,6 @@ jobs:
           fi
 
           mkdir -p ~/.ssh
-          
           echo "$AUR_SSH_KEY" > ~/.ssh/aur_key
           chmod 600 ~/.ssh/aur_key
           
@@ -67,16 +72,12 @@ jobs:
           ssh-keygen -lf ~/.ssh/aur_key || true
 
       - name: Checkout updater scripts repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: updater-repo
 
-      - name: Install dependencies
-        run: pacman -Syu --noconfirm git jq curl pacman-contrib openssh sudo
-
       - name: Clone AUR Package Repository
         run: |
-          # Force git to use the exact private key file and bypass host checking
           GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" \
             git clone ssh://aur@aur.archlinux.org/${{ matrix.name }}.git pkg-repo
 
@@ -90,7 +91,6 @@ jobs:
           cd pkg-repo
           bash ../updater-repo/scripts/${{ matrix.script }} "${{ matrix.name }}"
           
-          # Check if the update script modified any files
           if git diff --quiet && git diff --staged --quiet; then
             echo "No updates found for ${{ matrix.name }}. Finishing early."
             echo "updated=false" >> $GITHUB_OUTPUT
@@ -103,37 +103,36 @@ jobs:
         if: steps.check-updates.outputs.updated == 'true'
         run: |
           cd pkg-repo
-          
-          # Create a non-root build user (makepkg blocks running as root)
           useradd -m builder
           chown -R builder:builder .
-          
-          # Grant passwordless sudo so makepkg -s can install dependencies
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          
-          # Run makepkg as the builder user to verify dependencies and build success
           su builder -c "makepkg -s --noconfirm -f"
 
       - name: Commit changes locally
         if: steps.check-updates.outputs.updated == 'true'
-        id: commit
         run: |
           cd pkg-repo
-          
           git config user.name "AUR Bot"
-          git config user.email "aur-bot@users.noreply.github.com"
-
+          git config user.email "aur-bot@s-mc.io"
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to latest upstream release"
+          git commit -m "Update to latest upstream release
+
+          Automaticly updated by ${{ github.repository }}"
 
       - name: Push changes to AUR
         if: steps.check-updates.outputs.updated == 'true'
         run: |
           cd pkg-repo
-          
           if [ "$PUSH_CHANGES" = "true" ]; then
             echo "Pushing changes to AUR..."
-            git push origin master
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git push origin master
           else
             echo "Dry-run mode: Skipping push to AUR as requested."
           fi
+
+  trigger-readme-update:
+    needs: update-package
+    if: needs.prepare-readme-trigger.outputs.should_run == 'true'
+    uses: ./.github/workflows/update-readme.yml
+    permissions:
+      contents: write

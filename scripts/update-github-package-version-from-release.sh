@@ -14,7 +14,6 @@ fi
 
 LATEST_TAG=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" | jq -r .tag_name)
 
-# Fixed: Use double brackets [[ ... ]] to allow native '||' logical operators
 if [[ "$LATEST_TAG" == "null" || -z "$LATEST_TAG" ]]; then
 	echo "Failed to fetch latest tag from $UPSTREAM_REPO."
 	exit 1
@@ -37,7 +36,7 @@ if [ "$NEW_VER" != "$CURRENT_VER" ]; then
 		updpkgsums
 	else
 		echo "Skipping checksum update as configured."
-	fi # Fixed: Changed 'end' to 'fi'
+	fi
 
 	makepkg --printsrcinfo >.SRCINFO
 
