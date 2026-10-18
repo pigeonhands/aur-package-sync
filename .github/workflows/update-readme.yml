@@ -51,7 +51,7 @@ jobs:
               *) STATUS_LABEL="💤 No Update" ;;
             esac
             
-            AUR_BADGE="![AUR Version](https://img.shields.io/aur/version/${PKG_NAME})"
+            AUR_BADGE="[![AUR Version](https://img.shields.io/aur/version/${PKG_NAME})](https://aur.archlinux.org/packages/${PKG_NAME})"
             
             TABLE_ROWS+="| [\`${PKG_NAME}\`](https://aur.archlinux.org/packages/${PKG_NAME}) | ${AUR_BADGE} | \`${LAST_UPDATED_UTC}\` | [${UPSTREAM}](https://github.com/${UPSTREAM}) |"$'\n'
             SUMMARY_TABLE+="| \`${PKG_NAME}\` | ${STATUS_LABEL} | ${AUR_BADGE} | \`${LAST_UPDATED_UTC}\` | [${UPSTREAM}](https://github.com/${UPSTREAM}) |\n"
