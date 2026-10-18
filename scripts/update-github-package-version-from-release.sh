@@ -40,8 +40,6 @@ if [ "$NEW_VER" != "$CURRENT_VER" ]; then
 
 	makepkg --printsrcinfo >.SRCINFO
 
-	echo "UPDATED=true" >>$GITHUB_ENV
 else
 	echo "Package is already up to date."
-	echo "UPDATED=false" >>$GITHUB_ENV
 fi

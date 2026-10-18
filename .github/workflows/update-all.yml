@@ -81,6 +81,12 @@ jobs:
           GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" \
             git clone ssh://aur@aur.archlinux.org/${{ matrix.name }}.git pkg-repo
 
+      - name: Create builder user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder pkg-repo
+
       - name: Run Update Script & Check for Changes
         id: check-updates
         env:
@@ -88,25 +94,26 @@ jobs:
           UPDATE_CHECKSUM: ${{ matrix.update_checksum }}
           UPSTREAM_REPO: ${{ matrix.upstream_repo }}
         run: |
-          cd pkg-repo
-          bash ../updater-repo/scripts/${{ matrix.script }} "${{ matrix.name }}"
+          su builder -c "cd pkg-repo && bash ../updater-repo/scripts/${{ matrix.script }} '${{ matrix.name }}'"
           
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "No updates found for ${{ matrix.name }}. Finishing early."
-            echo "updated=false" >> $GITHUB_OUTPUT
-          else
-            echo "Updates detected!"
-            echo "updated=true" >> $GITHUB_OUTPUT
-          fi
+          su builder -c "
+            cd pkg-repo && \
+            if git diff --quiet && git diff --staged --quiet; then
+              echo 'updated=false'
+            else
+              echo 'updated=true'
+            fi
+          " >> $GITHUB_OUTPUT
 
       - name: Build Test Package
         if: steps.check-updates.outputs.updated == 'true'
         run: |
           cd pkg-repo
-          useradd -m builder
-          chown -R builder:builder .
-          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           su builder -c "makepkg -s --noconfirm -f"
+
+      - name: Re-own repo as root 
+        run: |
+          chown -R root:root pkg-repo
 
       - name: Commit changes locally
         if: steps.check-updates.outputs.updated == 'true'
