@@ -44,6 +44,8 @@ jobs:
     needs: parse-packages
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
     container:
       image: archlinux:base-devel
     strategy:
@@ -127,19 +129,20 @@ jobs:
           Automaticly updated by ${{ github.repository }}"
 
       - name: Push changes to AUR
+        id: push
         if: steps.check-updates.outputs.updated == 'true'
         run: |
           cd pkg-repo
           if [ "$PUSH_CHANGES" = "true" ]; then
             echo "Pushing changes to AUR..."
             GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git push origin master
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           else
             echo "Dry-run mode: Skipping push to AUR as requested."
           fi
-
   trigger-readme-update:
     needs: update-package
-    if: needs.prepare-readme-trigger.outputs.should_run == 'true'
+    if: ${{ !cancelled() && needs.update-package.outputs.pushed == 'true' }}
     uses: ./.github/workflows/update-readme.yml
     permissions:
       contents: write
