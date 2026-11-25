@@ -1,5 +1,5 @@
 PKG_NAME="nuvio-desktop-git"
 UPSTREAM="NuvioMedia/NuvioDesktop"
-PKG_VER="0.1.38_alpha-1"
-LAST_UPDATED_UTC="2026-11-20T05:44:36Z"
+PKG_VER="0.1.39_alpha-1"
+LAST_UPDATED_UTC="2026-11-25T07:01:00Z"
 STATUS="Updated"
